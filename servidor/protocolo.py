@@ -2,7 +2,7 @@
 
 import logging
 
-from servidor import jsonrpc
+from servidor import jsonrpc, registro
 
 log = logging.getLogger("mcp")
 
@@ -11,8 +11,8 @@ VERSIONES_SOPORTADAS = ("2025-06-18", "2025-03-26", "2024-11-05")
 
 INFO_SERVIDOR = {"name": "mcp-flota-gt", "version": "1.0.0"}
 
-# Estados de la sesión. El paso de uno a otro lo hacen solo initialize y
-# notifications/initialized; cualquier otro método fuera de LISTO se rechaza.
+# Estados de la sesión. Solo initialize y notifications/initialized la hacen
+# avanzar; el resto de métodos (salvo ping) se rechaza mientras no esté LISTA.
 NUEVA = "nueva"
 INICIALIZANDO = "inicializando"
 LISTA = "lista"
@@ -21,7 +21,8 @@ LISTA = "lista"
 class Sesion:
     """Una sesión MCP sobre una conexión stdio."""
 
-    def __init__(self):
+    def __init__(self, db=None):
+        self.db = db
         self.estado = NUEVA
         self.version_protocolo = None
         self.cliente = None
@@ -29,6 +30,7 @@ class Sesion:
             "initialize": self._initialize,
             "notifications/initialized": self._initialized,
             "ping": self._ping,
+            "tools/list": self._tools_list,
         }
 
     def despachar(self, mensaje):
@@ -44,19 +46,25 @@ class Sesion:
                 return None
             raise jsonrpc.ErrorRPC(jsonrpc.METHOD_NOT_FOUND, data=metodo)
 
-        if metodo != "initialize" and metodo != "ping" and self.estado != LISTA:
-            if not (metodo == "notifications/initialized" and self.estado == INICIALIZANDO):
-                raise jsonrpc.ErrorRPC(
-                    jsonrpc.INVALID_REQUEST,
-                    "El servidor no ha sido inicializado",
-                    data={"estado": self.estado, "method": metodo},
-                )
-
+        self._verificar_estado(metodo)
         return manejador(mensaje["params"])
 
-    def _initialize(self, params):
-        if self.estado != NUEVA:
+    def _verificar_estado(self, metodo):
+        if metodo == "ping" or self.estado == LISTA and metodo != "initialize":
+            return
+        if metodo == "initialize" and self.estado == NUEVA:
+            return
+        if metodo == "notifications/initialized" and self.estado == INICIALIZANDO:
+            return
+        if metodo == "initialize":
             raise jsonrpc.ErrorRPC(jsonrpc.INVALID_REQUEST, "La sesión ya fue inicializada")
+        raise jsonrpc.ErrorRPC(
+            jsonrpc.INVALID_REQUEST,
+            "El servidor no ha sido inicializado",
+            data={"estado": self.estado, "method": metodo},
+        )
+
+    def _initialize(self, params):
         if not isinstance(params, dict) or "protocolVersion" not in params:
             raise jsonrpc.ErrorRPC(jsonrpc.INVALID_PARAMS, data="Falta 'protocolVersion'")
 
@@ -83,3 +91,6 @@ class Sesion:
 
     def _ping(self, params):
         return {}
+
+    def _tools_list(self, params):
+        return {"tools": registro.listar()}
