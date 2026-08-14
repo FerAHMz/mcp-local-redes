@@ -8,6 +8,7 @@ import logging
 import sys
 
 from servidor import jsonrpc
+from servidor.protocolo import Sesion
 
 log = logging.getLogger("mcp")
 
@@ -70,16 +71,11 @@ def bucle(despachar, entrada=sys.stdin):
             escribir(respuesta)
 
 
-def _despachar_minimo(mensaje):
-    if mensaje["method"] == "ping":
-        return {}
-    raise jsonrpc.ErrorRPC(jsonrpc.METHOD_NOT_FOUND, data=mensaje["method"])
-
-
 def main():
     configurar_logging()
     log.info("servidor iniciado")
-    bucle(_despachar_minimo)
+    sesion = Sesion()
+    bucle(sesion.despachar)
     log.info("stdin cerrado, termino")
 
 
