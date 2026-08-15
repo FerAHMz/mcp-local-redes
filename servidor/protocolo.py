@@ -31,6 +31,7 @@ class Sesion:
             "notifications/initialized": self._initialized,
             "ping": self._ping,
             "tools/list": self._tools_list,
+            "tools/call": self._tools_call,
         }
 
     def despachar(self, mensaje):
@@ -94,3 +95,25 @@ class Sesion:
 
     def _tools_list(self, params):
         return {"tools": registro.listar()}
+
+    def _tools_call(self, params):
+        if not isinstance(params, dict) or not isinstance(params.get("name"), str):
+            raise jsonrpc.ErrorRPC(jsonrpc.INVALID_PARAMS, data="Falta 'name'")
+
+        herramienta = registro.obtener(params["name"])
+        if herramienta is None:
+            # La especificación de MCP trata una herramienta desconocida como
+            # parámetros inválidos, no como método inexistente.
+            raise jsonrpc.ErrorRPC(jsonrpc.INVALID_PARAMS, data=f"Herramienta desconocida: {params['name']}")
+
+        argumentos = params.get("arguments", {})
+        registro.validar_argumentos(herramienta, argumentos)
+        log.info("tools/call %s %s", herramienta["name"], argumentos)
+
+        try:
+            texto = herramienta["ejecutar"](self.db, argumentos)
+        except registro.ErrorNegocio as e:
+            log.info("  -> error de negocio: %s", e)
+            return {"content": [{"type": "text", "text": str(e)}], "isError": True}
+
+        return {"content": [{"type": "text", "text": texto}]}

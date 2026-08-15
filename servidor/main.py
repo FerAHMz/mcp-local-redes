@@ -5,6 +5,8 @@ escriba ahí rompe la sesión con el cliente, por eso todo el logging va a stder
 """
 
 import logging
+import os
+import sqlite3
 import sys
 
 from servidor import jsonrpc
@@ -71,11 +73,31 @@ def bucle(despachar, entrada=sys.stdin):
             escribir(respuesta)
 
 
+RUTA_DB_DEFECTO = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datos", "flota.db")
+
+
+def abrir_db():
+    """Abre la base en modo lectura. Si no existe devuelve None para que las herramientas lo reporten."""
+    ruta = os.environ.get("MCP_FLOTA_DB", RUTA_DB_DEFECTO)
+    if not os.path.exists(ruta):
+        log.error("no existe la base %s; hay que correr datos/generador.py", ruta)
+        return None
+    db = sqlite3.connect(f"file:{ruta}?mode=ro", uri=True)
+    db.row_factory = sqlite3.Row
+    log.info("base de datos: %s", ruta)
+    return db
+
+
 def main():
     configurar_logging()
     log.info("servidor iniciado")
-    sesion = Sesion()
-    bucle(sesion.despachar)
+    db = abrir_db()
+    sesion = Sesion(db)
+    try:
+        bucle(sesion.despachar)
+    finally:
+        if db is not None:
+            db.close()
     log.info("stdin cerrado, termino")
 
 

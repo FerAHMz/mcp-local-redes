@@ -11,6 +11,14 @@ from servidor import jsonrpc
 MAX_FILAS = 200
 
 
+class ErrorNegocio(Exception):
+    """Fallo de la herramienta que no es del protocolo: placa inexistente, rango vacío, etc.
+
+    Se devuelve como `result` con isError=true para que el modelo pueda
+    explicárselo al usuario, en lugar de como error JSON-RPC.
+    """
+
+
 def _eco(db, argumentos):
     return argumentos["texto"]
 
