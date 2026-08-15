@@ -20,16 +20,23 @@ import sys
 from datetime import datetime, timedelta
 
 from geopy.distance import great_circle
+from shapely import contains_xy
+from shapely.geometry import Polygon
+from shapely.wkt import loads as cargar_wkt
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 DIR_RUTAS = os.path.join(AQUI, "rutas")
 ESQUEMA = os.path.join(AQUI, "esquema.sql")
 
 INTERVALO_S = 15
+# Puntos consecutivos dentro (o fuera) de un polígono antes de dar por buena una
+# entrada o salida; sin esta histéresis el ruido del GPS en el borde genera
+# decenas de eventos falsos.
+HISTERESIS_GEOCERCA = 4
 DIAS = 7
 SIGMA_GPS_M = 5.0
 # Por debajo de esto el receptor reporta 0; evita velocidades fantasma por el ruido del GPS.
-UMBRAL_VELOCIDAD_KMH = 2.0
+UMBRAL_VELOCIDAD_KMH = 5.0
 
 VEHICULOS = [
     ("P-123BCD", "camion", "Marvin Castellanos"),
@@ -50,6 +57,30 @@ VEHICULOS = [
 ]
 # Esta unidad está dada de baja: existe en el catálogo pero no reporta.
 PLACA_INACTIVA = "P-667ZBC"
+
+LIMITE_VELOCIDAD_KMH = 60
+
+# (nombre, tipo, centro (lat, lon), medio lado en metros). Los centros coinciden
+# con los extremos de las rutas para que las unidades entren y salgan de verdad.
+GEOCERCAS = [
+    ("CEDIS Zona 12", "bodega", (14.5850, -90.5450), 260),
+    ("Bodega Villa Nueva", "bodega", (14.5270, -90.5870), 260),
+    ("Bodega Mixco", "bodega", (14.6330, -90.6060), 260),
+    ("CD Zona 18", "centro_distribucion", (14.6720, -90.4880), 260),
+    ("Bodega Carretera a El Salvador", "bodega", (14.5530, -90.4670), 260),
+    ("Centro Histórico", "zona_cliente", (14.6419, -90.5133), 650),
+]
+
+
+def poligono_wkt(centro, medio_lado_m):
+    """Cuadrado en WKT (orden lon lat) centrado en `centro`."""
+    dlat = medio_lado_m / 111_320
+    dlon = medio_lado_m / (111_320 * math.cos(math.radians(centro[0])))
+    esquinas = [
+        (centro[1] - dlon, centro[0] - dlat), (centro[1] + dlon, centro[0] - dlat),
+        (centro[1] + dlon, centro[0] + dlat), (centro[1] - dlon, centro[0] + dlat),
+    ]
+    return Polygon(esquinas).wkt
 
 
 def decodificar_polilinea(codificada):
@@ -90,6 +121,7 @@ def cargar_rutas():
             objetivo = (parada["lat"], parada["lon"])
             i = min(range(len(puntos)), key=lambda k: great_circle(puntos[k], objetivo).meters)
             paradas.append({"nombre": parada["nombre"], "distancia": acumulada[i]})
+        paradas.sort(key=lambda p: p["distancia"])
         rutas.append({
             "nombre": datos["nombre"],
             "puntos": puntos,
@@ -175,6 +207,7 @@ class Simulador:
         self.ruta = ruta
         self.rng = rng
         self.puntos = []  # (datetime, (lat, lon), ignicion)
+        self.eventos = []  # (datetime, (lat, lon), tipo, detalle)
 
     def detenido(self, inicio, duracion_s, coordenada, ignicion=1):
         t = inicio
@@ -183,12 +216,20 @@ class Simulador:
             t += timedelta(seconds=INTERVALO_S)
         return t
 
-    def recorrer(self, inicio, minutos_parada):
-        """Una vuelta completa con parada en cada punto intermedio. Devuelve la hora de llegada."""
+    def recorrer(self, inicio, minutos_parada, excesos=(), paradas_largas=None):
+        """Una vuelta completa con parada en cada punto intermedio. Devuelve la hora de llegada.
+
+        `excesos` es una lista de (fraccion_de_ruta, velocidad_kmh) que fuerza un
+        exceso de velocidad de 90 segundos al pasar por esa fracción del recorrido.
+        `paradas_largas` mapea índice de parada -> minutos para paradas prolongadas.
+        """
         ruta, rng = self.ruta, self.rng
         base = ruta["velocidad_base"]
         t, distancia, velocidad = inicio, 0.0, 0.0
-        pendientes = list(ruta["paradas"])
+        pendientes = list(enumerate(ruta["paradas"]))
+        excesos = sorted(excesos)
+        forzada_hasta, forzada_kmh = None, 0.0
+        paradas_largas = paradas_largas or {}
 
         while distancia < ruta["largo"]:
             self.puntos.append((t, posicion_en(ruta, distancia), 1))
@@ -197,19 +238,38 @@ class Simulador:
             # Velocidad objetivo con un paseo aleatorio acotado, más frenadas por
             # tráfico y semáforos. Cerca de una parada el objetivo baja a cero.
             objetivo = base * rng.uniform(0.55, 1.25)
-            if pendientes and pendientes[0]["distancia"] - distancia < 150:
-                objetivo = 0.0
+            # Al acercarse a una parada baja a paso de hombre (no a cero: con
+            # objetivo cero la unidad se acerca asintóticamente y nunca llega).
+            if pendientes and pendientes[0][1]["distancia"] - distancia < 150:
+                objetivo = 8.0
             if rng.random() < 0.04:
                 objetivo = 0.0
             velocidad += (objetivo - velocidad) * 0.35
             velocidad = max(0.0, min(velocidad, 72.0))
+
+            if excesos and distancia / ruta["largo"] >= excesos[0][0] and forzada_hasta is None:
+                _, forzada_kmh = excesos.pop(0)
+                forzada_hasta = t + timedelta(seconds=90)
+                self.eventos.append((t, posicion_en(ruta, distancia), "exceso_velocidad",
+                                     {"velocidad_max": forzada_kmh, "limite": LIMITE_VELOCIDAD_KMH, "duracion_s": 90}))
+            if forzada_hasta is not None:
+                velocidad = forzada_kmh * rng.uniform(0.96, 1.0)
+                if t >= forzada_hasta:
+                    forzada_hasta = None
+
             distancia += velocidad / 3.6 * INTERVALO_S
 
-            if pendientes and distancia >= pendientes[0]["distancia"]:
-                parada = pendientes.pop(0)
+            if pendientes and distancia >= pendientes[0][1]["distancia"]:
+                indice, parada = pendientes.pop(0)
                 distancia = parada["distancia"]
-                duracion = 60 * rng.uniform(minutos_parada * 0.6, minutos_parada * 1.4)
-                t = self.detenido(t, duracion, posicion_en(ruta, distancia))
+                coordenada = posicion_en(ruta, distancia)
+                if indice in paradas_largas:
+                    duracion = 60 * paradas_largas[indice]
+                    self.eventos.append((t, coordenada, "parada_prolongada",
+                                         {"minutos": paradas_largas[indice], "lugar": parada["nombre"]}))
+                else:
+                    duracion = 60 * rng.uniform(minutos_parada * 0.6, minutos_parada * 1.4)
+                t = self.detenido(t, duracion, coordenada)
                 velocidad = 0.0
         return t
 
@@ -226,24 +286,112 @@ def plan_del_dia(indice_vehiculo, fecha, rng):
     return {"inicio": inicio, "fin_jornada": inicio + timedelta(hours=horas_jornada)}
 
 
-def simular_vehiculo(indice, ruta, fechas, ahora, rng):
-    """Genera la trayectoria de una unidad en todos los días. Devuelve lista de (ts, (lat, lon), ignicion)."""
-    trayectoria = []
+def planificar_inyecciones(rng, n_vehiculos, fechas):
+    """Decide de antemano qué anomalías se inyectan; es la verdad de base contra la que se prueban las herramientas."""
+    activos = [i for i in range(n_vehiculos) if VEHICULOS[i][0] != PLACA_INACTIVA]
+    plan = {"excesos": {}, "paradas_largas": {}, "huecos": {}, "detenidas_ahora": {}}
+    for _ in range(12):
+        clave = (rng.choice(activos), rng.choice(fechas[:-1]))
+        plan["excesos"].setdefault(clave, []).append((rng.uniform(0.15, 0.85), rng.choice([78, 85, 92, 98, 105])))
+    for _ in range(8):
+        clave = (rng.choice(activos), rng.choice(fechas[:-1]))
+        plan["paradas_largas"].setdefault(clave, {})[rng.randint(0, 1)] = rng.choice([45, 60, 75, 90, 110])
+    for _ in range(5):
+        clave = (rng.choice(activos), rng.choice(fechas[:-1]))
+        plan["huecos"][clave] = (rng.uniform(0.2, 0.8), rng.randint(6, 14))
+    # Las unidades con índice múltiplo de 3 operan todos los días, así que
+    # siempre hay tres detenidas con motor encendido en el instante final.
+    for i, minutos in zip([v for v in activos if v % 3 == 0][:3], (35, 52, 95)):
+        plan["detenidas_ahora"][i] = minutos
+    return plan
+
+
+def abrir_hueco(puntos, fraccion, minutos):
+    """Elimina los puntos de una ventana del día para simular pérdida de señal. Devuelve (puntos, inicio, fin)."""
+    inicio = puntos[0][0] + (puntos[-1][0] - puntos[0][0]) * fraccion
+    fin = inicio + timedelta(minutes=minutos)
+    return [p for p in puntos if not (inicio <= p[0] < fin)], inicio, fin
+
+
+def forzar_detenida(puntos, ahora, minutos):
+    """Recorta el día en `ahora - minutos` y deja la unidad quieta con motor encendido hasta `ahora`."""
+    desde = ahora - timedelta(minutes=minutos)
+    previos = [p for p in puntos if p[0] < desde and p[2] == 1]
+    if not previos:
+        return puntos, None
+    coordenada = previos[-1][1]
+    t = desde
+    while t <= ahora:
+        previos.append((t, coordenada, 1))
+        t += timedelta(seconds=INTERVALO_S)
+    return previos, (desde, coordenada)
+
+
+def simular_vehiculo(indice, ruta, fechas, ahora, rng, plan):
+    """Genera la trayectoria de una unidad en todos los días.
+
+    Devuelve (puntos, eventos) con puntos = [(ts, (lat, lon), ignicion)] y
+    eventos = [(ts, (lat, lon), tipo, detalle)].
+    """
+    trayectoria, eventos = [], []
     for fecha in fechas:
-        plan = plan_del_dia(indice, fecha, rng)
-        if plan is None:
+        dia = plan_del_dia(indice, fecha, rng)
+        if dia is None:
             continue
         sim = Simulador(ruta, rng)
-        t = sim.detenido(plan["inicio"], 60 * rng.uniform(3, 8), ruta["puntos"][0])
+        excesos = list(plan["excesos"].get((indice, fecha), []))
+        paradas_largas = plan["paradas_largas"].get((indice, fecha), {})
+        t = sim.detenido(dia["inicio"], 60 * rng.uniform(3, 8), ruta["puntos"][0])
         while True:
-            t = sim.recorrer(t, minutos_parada=rng.uniform(10, 20))
-            if t + timedelta(seconds=ruta["largo"] / (ruta["velocidad_base"] / 3.6) * 1.4) > plan["fin_jornada"]:
+            # Las anomalías van en la primera vuelta; las siguientes son normales.
+            t = sim.recorrer(t, minutos_parada=rng.uniform(10, 20), excesos=excesos, paradas_largas=paradas_largas)
+            excesos, paradas_largas = [], {}
+            if t + timedelta(seconds=ruta["largo"] / (ruta["velocidad_base"] / 3.6) * 1.4) > dia["fin_jornada"]:
                 break
             t = sim.detenido(t, 60 * rng.uniform(15, 40), ruta["puntos"][-1])
         # Al cerrar la jornada la unidad queda unos minutos con motor apagado y deja de reportar.
         sim.detenido(t, 60 * 3, ruta["puntos"][-1], ignicion=0)
-        trayectoria.extend(p for p in sim.puntos if p[0] <= ahora)
-    return trayectoria
+
+        puntos = [p for p in sim.puntos if p[0] <= ahora]
+        eventos.extend(e for e in sim.eventos if e[0] <= ahora)
+
+        if (indice, fecha) in plan["huecos"]:
+            fraccion, minutos = plan["huecos"][(indice, fecha)]
+            puntos, inicio_hueco, fin_hueco = abrir_hueco(puntos, fraccion, minutos)
+            ultimo = max(p for p in puntos if p[0] < inicio_hueco)
+            eventos.append((inicio_hueco, ultimo[1], "perdida_senal",
+                            {"minutos": minutos, "ultimo_reporte": ultimo[0].strftime("%H:%M:%S"),
+                             "reanuda": fin_hueco.strftime("%H:%M:%S")}))
+
+        if fecha == fechas[-1] and indice in plan["detenidas_ahora"]:
+            puntos, detenida = forzar_detenida(puntos, ahora, plan["detenidas_ahora"][indice])
+            if detenida:
+                eventos.append((detenida[0], detenida[1], "parada_prolongada",
+                                {"minutos": plan["detenidas_ahora"][indice], "lugar": "en ruta", "en_curso": True}))
+        trayectoria.extend(puntos)
+    return trayectoria, eventos
+
+
+def eventos_geocerca(filas, geocercas):
+    """Detecta entradas y salidas comparando cada posición guardada contra cada polígono."""
+    eventos = []
+    lons = [f[3] for f in filas]
+    lats = [f[2] for f in filas]
+    for nombre, poligono in geocercas:
+        dentro = contains_xy(poligono, lons, lats)
+        estado, racha = False, 0
+        for k, esta in enumerate(dentro):
+            if esta == estado:
+                racha = 0
+                continue
+            racha += 1
+            if racha < HISTERESIS_GEOCERCA:
+                continue
+            fila = filas[k - racha + 1]
+            tipo = "geocerca_entrada" if esta else "geocerca_salida"
+            eventos.append((fila[0], fila[1], tipo, fila[2], fila[3], json.dumps({"geocerca": nombre}, ensure_ascii=False)))
+            estado, racha = bool(esta), 0
+    return eventos
 
 
 def a_filas(vehiculo_id, trayectoria, odometro_inicial, rng):
@@ -283,9 +431,11 @@ def crear_base(ruta_db):
 
 
 def generar(ruta_db, ahora, semilla):
+    """Genera la base completa. Devuelve el plan de inyecciones para poder verificar contra él."""
     rng = random.Random(semilla)
     rutas = cargar_rutas()
     fechas = [(ahora - timedelta(days=DIAS - 1 - i)).date() for i in range(DIAS)]
+    plan = planificar_inyecciones(rng, len(VEHICULOS), fechas)
 
     db = crear_base(ruta_db)
     db.executemany(
@@ -293,24 +443,36 @@ def generar(ruta_db, ahora, semilla):
         [(i + 1, placa, tipo, conductor, int(placa != PLACA_INACTIVA))
          for i, (placa, tipo, conductor) in enumerate(VEHICULOS)],
     )
+    geocercas = [(nombre, poligono_wkt(centro, lado)) for nombre, _, centro, lado in GEOCERCAS]
+    db.executemany(
+        "INSERT INTO geocercas(nombre, poligono_wkt, tipo) VALUES (?, ?, ?)",
+        [(nombre, wkt, tipo) for (nombre, tipo, _, _), (_, wkt) in zip(GEOCERCAS, geocercas)],
+    )
+    poligonos = [(nombre, cargar_wkt(wkt)) for nombre, wkt in geocercas]
 
-    total = 0
+    total_pos, total_ev = 0, 0
     for i, (placa, _, _) in enumerate(VEHICULOS):
         if placa == PLACA_INACTIVA:
             continue
         ruta = rutas[i % len(rutas)]
-        trayectoria = simular_vehiculo(i, ruta, fechas, ahora, rng)
+        trayectoria, inyectados = simular_vehiculo(i, ruta, fechas, ahora, rng, plan)
         filas = a_filas(i + 1, trayectoria, odometro_inicial=rng.uniform(20_000, 180_000), rng=rng)
         db.executemany(
             "INSERT INTO posiciones(vehiculo_id, ts, lat, lon, velocidad, rumbo, ignicion, odometro) VALUES (?,?,?,?,?,?,?,?)",
             filas,
         )
-        total += len(filas)
-        print(f"{placa}: {ruta['nombre']}, {len(filas)} posiciones", file=sys.stderr)
+        eventos = [(i + 1, ts.strftime("%Y-%m-%d %H:%M:%S"), tipo, round(punto[0], 6), round(punto[1], 6),
+                    json.dumps(detalle, ensure_ascii=False)) for ts, punto, tipo, detalle in inyectados]
+        eventos += eventos_geocerca(filas, poligonos)
+        db.executemany("INSERT INTO eventos(vehiculo_id, ts, tipo, lat, lon, detalle) VALUES (?,?,?,?,?,?)", eventos)
+        total_pos += len(filas)
+        total_ev += len(eventos)
+        print(f"{placa}: {ruta['nombre']}, {len(filas)} posiciones, {len(eventos)} eventos", file=sys.stderr)
 
     db.commit()
     db.close()
-    print(f"{total} posiciones en {ruta_db}", file=sys.stderr)
+    print(f"{total_pos} posiciones y {total_ev} eventos en {ruta_db}", file=sys.stderr)
+    return plan
 
 
 def main():
