@@ -405,7 +405,9 @@ def a_filas(vehiculo_id, trayectoria, odometro_inicial, rng):
         if anterior is not None:
             dt = (ts - anterior[0]).total_seconds()
             # Tras un hueco o un cambio de día no tiene sentido derivar velocidad.
-            if 0 < dt <= INTERVALO_S * 2:
+            # Si la unidad no se movió de verdad, el ruido no debe convertirse en
+            # velocidad: un dispositivo real reporta 0 cuando el acelerómetro no detecta movimiento.
+            if 0 < dt <= INTERVALO_S * 2 and punto != anterior[3]:
                 metros = great_circle(anterior[1], medido).meters
                 velocidad = metros / dt * 3.6
                 if velocidad < UMBRAL_VELOCIDAD_KMH:
@@ -417,7 +419,7 @@ def a_filas(vehiculo_id, trayectoria, odometro_inicial, rng):
                 direccion = anterior[2]
         filas.append((vehiculo_id, ts.strftime("%Y-%m-%d %H:%M:%S"), round(medido[0], 6), round(medido[1], 6),
                       round(velocidad, 1), round(direccion, 1), ignicion, round(odometro, 2)))
-        anterior = (ts, medido, direccion)
+        anterior = (ts, medido, direccion, punto)
     return filas
 
 
