@@ -19,21 +19,13 @@ class ErrorNegocio(Exception):
     """
 
 
-def _eco(db, argumentos):
-    return argumentos["texto"]
-
+# Importo aquí y no arriba porque los módulos de herramientas dependen de
+# MAX_FILAS y ErrorNegocio definidos en este archivo.
+from servidor.herramientas import posicion, detenidas  # noqa: E402
 
 HERRAMIENTAS = [
-    {
-        "name": "eco",
-        "description": "Devuelve el mismo texto que recibe. Herramienta de prueba del protocolo.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"texto": {"type": "string", "description": "Texto a devolver"}},
-            "required": ["texto"],
-        },
-        "ejecutar": _eco,
-    },
+    posicion.HERRAMIENTA,
+    detenidas.HERRAMIENTA,
 ]
 
 _POR_NOMBRE = {h["name"]: h for h in HERRAMIENTAS}
