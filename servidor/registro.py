@@ -21,11 +21,13 @@ class ErrorNegocio(Exception):
 
 # Importo aquí y no arriba porque los módulos de herramientas dependen de
 # MAX_FILAS y ErrorNegocio definidos en este archivo.
-from servidor.herramientas import posicion, detenidas  # noqa: E402
+from servidor.herramientas import posicion, detenidas, recorrido, kilometraje  # noqa: E402
 
 HERRAMIENTAS = [
     posicion.HERRAMIENTA,
     detenidas.HERRAMIENTA,
+    recorrido.HERRAMIENTA,
+    kilometraje.HERRAMIENTA,
 ]
 
 _POR_NOMBRE = {h["name"]: h for h in HERRAMIENTAS}
