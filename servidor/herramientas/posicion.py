@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from servidor.herramientas import comun
+from servidor.herramientas import comun, geocodificacion
 
 
 def ejecutar(db, argumentos):
@@ -26,7 +26,8 @@ def ejecutar(db, argumentos):
         "conductor": vehiculo["conductor"],
         "ultimo_reporte": fila["ts"],
         "minutos_desde_ultimo_reporte": comun.minutos_entre(ts, ahora),
-        "direccion": comun.referencia_cercana(db, fila["lat"], fila["lon"]),
+        "direccion": geocodificacion.direccion(db, fila["lat"], fila["lon"]),
+        "referencia": comun.referencia_cercana(db, fila["lat"], fila["lon"]),
         "lat": fila["lat"],
         "lon": fila["lon"],
         "velocidad_kmh": fila["velocidad"],
