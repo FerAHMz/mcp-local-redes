@@ -56,10 +56,13 @@ def ejecutar(db, argumentos):
         raise comun.ErrorNegocio(f"La unidad {vehiculo['placa']} no tiene reportes el {fecha}")
 
     periodos = visitas(df, poligono)
+    # Si el primer reporte del día ya cae dentro, la unidad pasó la noche ahí:
+    # no hubo entrada ese día y lo marco para no confundir al modelo.
     detalle = [{
         "entrada": entrada.strftime("%H:%M"),
         "salida": None if sigue else salida.strftime("%H:%M"),
         "minutos_dentro": comun.minutos_entre(entrada, salida),
+        "desde_inicio_del_dia": bool(entrada == df.ts.iloc[0]),
         "sigue_dentro": sigue,
     } for entrada, salida, sigue in periodos]
 

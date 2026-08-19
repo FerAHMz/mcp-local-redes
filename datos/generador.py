@@ -274,10 +274,15 @@ class Simulador:
         return t
 
 
+def opera(indice_vehiculo, fecha):
+    """Los domingos solo sale un tercio de la flota."""
+    return fecha.weekday() != 6 or indice_vehiculo % 3 == 0
+
+
 def plan_del_dia(indice_vehiculo, fecha, rng):
-    """Decide si la unidad opera ese día y con qué horario y número de vueltas."""
+    """Decide el horario de la unidad ese día, o None si no opera."""
     dia_semana = fecha.weekday()
-    if dia_semana == 6 and indice_vehiculo % 3 != 0:
+    if not opera(indice_vehiculo, fecha):
         return None
     inicio = datetime.combine(fecha, datetime.min.time()) + timedelta(
         hours=6, minutes=rng.randint(20, 140)
@@ -289,15 +294,15 @@ def plan_del_dia(indice_vehiculo, fecha, rng):
 def planificar_inyecciones(rng, n_vehiculos, fechas):
     """Decide de antemano qué anomalías se inyectan; es la verdad de base contra la que se prueban las herramientas."""
     activos = [i for i in range(n_vehiculos) if VEHICULOS[i][0] != PLACA_INACTIVA]
+    # Solo combinaciones (unidad, día) en las que la unidad sale, para que todo
+    # lo planificado termine de verdad en la base.
+    combinaciones = [(i, f) for i in activos for f in fechas[:-1] if opera(i, f)]
     plan = {"excesos": {}, "paradas_largas": {}, "huecos": {}, "detenidas_ahora": {}}
-    for _ in range(12):
-        clave = (rng.choice(activos), rng.choice(fechas[:-1]))
+    for clave in rng.sample(combinaciones, 12):
         plan["excesos"].setdefault(clave, []).append((rng.uniform(0.15, 0.85), rng.choice([78, 85, 92, 98, 105])))
-    for _ in range(8):
-        clave = (rng.choice(activos), rng.choice(fechas[:-1]))
-        plan["paradas_largas"].setdefault(clave, {})[rng.randint(0, 1)] = rng.choice([45, 60, 75, 90, 110])
-    for _ in range(5):
-        clave = (rng.choice(activos), rng.choice(fechas[:-1]))
+    for clave in rng.sample(combinaciones, 8):
+        plan["paradas_largas"][clave] = {rng.randint(0, 1): rng.choice([45, 60, 75, 90, 110])}
+    for clave in rng.sample(combinaciones, 5):
         plan["huecos"][clave] = (rng.uniform(0.2, 0.8), rng.randint(6, 14))
     # Las unidades con índice múltiplo de 3 operan todos los días, así que
     # siempre hay tres detenidas con motor encendido en el instante final.
