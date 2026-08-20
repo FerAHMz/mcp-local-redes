@@ -118,6 +118,16 @@ ejemplos de las preguntas que responde.
 El texto de la herramienta es JSON serializado dentro de la cadena `text`; el
 modelo lo lee como texto y lo explica en lenguaje natural.
 
+`content` es una lista porque una herramienta puede devolver varios bloques.
+`mapa_recorrido` devuelve dos: el resumen en texto y la imagen del mapa.
+
+```
+<- {"jsonrpc":"2.0","id":8,"result":{"content":[{"type":"text","text":"{\n  \"placa\": \"P-789GHJ\", ...}"},{"type":"image","data":"iVBORw0KGgoAAAANSUhEUgAA...","mimeType":"image/png"}]}}
+```
+
+Recorté el base64 del PNG (son unos 700 KB en una sola línea; el transporte por
+stdio no tiene límite de tamaño de línea, solo el delimitador `\n`).
+
 ### 5. `tools/call` con error de negocio
 
 ```

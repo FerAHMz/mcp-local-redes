@@ -1,7 +1,8 @@
 """Registro de herramientas: nombre, descripción, esquema de entrada y función que la ejecuta.
 
 Cada herramienta es un dict con las tres llaves que MCP publica en tools/list
-más `ejecutar`, una función (db, argumentos) -> str que nunca sale del servidor.
+más `ejecutar`, una función (db, argumentos) que devuelve el texto del resultado
+(o una lista de bloques de contenido) y que nunca sale del servidor.
 """
 
 from servidor import jsonrpc
@@ -21,12 +22,13 @@ class ErrorNegocio(Exception):
 
 # Importo aquí y no arriba porque los módulos de herramientas dependen de
 # MAX_FILAS y ErrorNegocio definidos en este archivo.
-from servidor.herramientas import alertas, detenidas, geocercas, kilometraje, posicion, recorrido  # noqa: E402
+from servidor.herramientas import alertas, detenidas, geocercas, kilometraje, mapa, posicion, recorrido  # noqa: E402
 
 HERRAMIENTAS = [
     posicion.HERRAMIENTA,
     detenidas.HERRAMIENTA,
     recorrido.HERRAMIENTA,
+    mapa.HERRAMIENTA,
     alertas.HERRAMIENTA,
     geocercas.HERRAMIENTA,
     kilometraje.HERRAMIENTA,

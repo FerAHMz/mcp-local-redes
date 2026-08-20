@@ -1,12 +1,13 @@
 """Pruebas de las seis herramientas contra el set sintético y sus eventos inyectados."""
 
+import base64
 import json
 from datetime import timedelta
 
 import pytest
 
 from servidor import registro
-from servidor.herramientas import alertas, detenidas, geocercas, kilometraje, posicion, recorrido
+from servidor.herramientas import alertas, detenidas, geocercas, kilometraje, mapa, posicion, recorrido
 from servidor.registro import ErrorNegocio, MAX_FILAS
 from tests.conftest import AHORA
 
@@ -194,3 +195,26 @@ def test_ninguna_respuesta_supera_el_tope_de_filas(db, nombre, argumentos):
 
 def test_tope_de_filas_es_explicito():
     assert MAX_FILAS == 200
+
+
+def test_mapa_recorrido_devuelve_texto_e_imagen_png(db):
+    bloques = mapa.ejecutar(db, {"placa": "P-456DEF", "fecha": str(AYER)})
+    assert [b["type"] for b in bloques] == ["text", "image"]
+    assert bloques[1]["mimeType"] == "image/png"
+    png = base64.b64decode(bloques[1]["data"])
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert json.loads(bloques[0]["text"])["placa"] == "P-456DEF"
+
+
+def test_mapa_recorrido_funciona_sin_red(db, monkeypatch):
+    def sin_red(*args):
+        raise OSError("sin conexión")
+    monkeypatch.setattr(mapa, "descargar_tile", sin_red)
+    bloques = mapa.ejecutar(db, {"placa": "P-456DEF", "fecha": str(AYER)})
+    assert json.loads(bloques[0]["text"])["fondo"].startswith("sin mapa base")
+    assert base64.b64decode(bloques[1]["data"])[:4] == b"\x89PNG"
+
+
+def test_mapa_recorrido_dia_sin_datos(db):
+    with pytest.raises(ErrorNegocio, match="no tiene reportes"):
+        mapa.ejecutar(db, {"placa": "P-456DEF", "fecha": "2020-01-01"})

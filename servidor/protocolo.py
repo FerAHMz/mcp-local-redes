@@ -111,9 +111,13 @@ class Sesion:
         log.info("tools/call %s %s", herramienta["name"], argumentos)
 
         try:
-            texto = herramienta["ejecutar"](self.db, argumentos)
+            resultado = herramienta["ejecutar"](self.db, argumentos)
         except registro.ErrorNegocio as e:
             log.info("  -> error de negocio: %s", e)
             return {"content": [{"type": "text", "text": str(e)}], "isError": True}
 
-        return {"content": [{"type": "text", "text": texto}]}
+        # Una herramienta devuelve texto o, si necesita varios bloques (por
+        # ejemplo texto más una imagen), la lista de bloques ya armada.
+        if isinstance(resultado, list):
+            return {"content": resultado}
+        return {"content": [{"type": "text", "text": resultado}]}

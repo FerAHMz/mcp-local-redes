@@ -131,7 +131,7 @@ def test_tools_list_publica_esquemas():
     sesion = sesion_lista()
     herramientas = sesion.despachar(jsonrpc.parsear('{"jsonrpc":"2.0","id":1,"method":"tools/list"}'))["tools"]
     assert {h["name"] for h in herramientas} == {
-        "posicion_actual", "unidades_detenidas", "resumen_recorrido",
+        "posicion_actual", "unidades_detenidas", "resumen_recorrido", "mapa_recorrido",
         "alertas", "verificar_geocerca", "reporte_kilometraje",
     }
     for h in herramientas:

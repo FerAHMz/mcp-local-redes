@@ -108,7 +108,7 @@ imprimiendo cada mensaje tal como viaja en cada dirección.
 
 ```bash
 python cliente_prueba.py          # interactivo
-python cliente_prueba.py --demo   # las seis herramientas y tres casos de error, de corrido
+python cliente_prueba.py --demo   # las herramientas de texto y tres casos de error, de corrido
 ```
 
 En modo interactivo se escribe el número de la herramienta, se responden sus
@@ -148,7 +148,7 @@ En Windows `command` es `C:\\ruta\\mcp-local-redes\\.venv\\Scripts\\python.exe`.
 Si se quiere geocodificación con Google se agrega
 `"env": {"GOOGLE_MAPS_API_KEY": "..."}` dentro de `"flota"`.
 
-Al reiniciar Claude Desktop aparecen las seis herramientas y se puede preguntar
+Al reiniciar Claude Desktop aparecen las siete herramientas y se puede preguntar
 en lenguaje natural. La base de datos se busca en `datos/flota.db` relativa al
 repositorio; se puede cambiar con la variable `MCP_FLOTA_DB`.
 
@@ -159,6 +159,7 @@ repositorio; se puede cambiar con la variable `MCP_FLOTA_DB`.
 | `posicion_actual` | ¿Dónde está la P-123BCD? | `placa` | Dirección, coordenadas, velocidad, rumbo, estado del motor y hora del último reporte |
 | `unidades_detenidas` | ¿Qué unidades llevan más de 30 minutos detenidas? | `minutos_minimos` (opcional, default 30) | Placa, ubicación, desde cuándo y si tiene motor encendido, por unidad |
 | `resumen_recorrido` | Dame el recorrido de la P-456DEF de ayer | `placa`, `fecha` | Kilómetros, hora de salida y retorno, paradas (número, duración, las más largas), velocidad máxima y promedio, huecos de señal |
+| `mapa_recorrido` | Muéstrame en un mapa el recorrido de la P-456DEF de ayer | `placa`, `fecha` | Imagen PNG con el trazo sobre OpenStreetMap, inicio, fin, paradas con su duración y geocercas |
 | `alertas` | ¿Hubo excesos de velocidad esta semana? | `tipo` (opcional), `fecha_inicio`, `fecha_fin` | Conteo por tipo y por unidad, y detalle de los eventos más graves |
 | `verificar_geocerca` | ¿La P-456DEF entró al CEDIS hoy? | `placa`, `nombre_geocerca`, `fecha` | Si entró, con hora de entrada y salida y minutos dentro por visita |
 | `reporte_kilometraje` | ¿Cuál unidad recorrió más kilómetros este mes? | `fecha_inicio`, `fecha_fin` | Ranking de unidades por kilometraje con días operados y promedio diario |
@@ -177,11 +178,22 @@ devuelve el resultado calculado. El tope de filas por respuesta es la constante
 `MAX_FILAS = 200` en `servidor/registro.py`, y hay una prueba que lo verifica
 para cada herramienta.
 
+### El mapa del recorrido
+
+`mapa_recorrido` es la única herramienta que devuelve algo más que texto: su
+resultado lleva dos bloques de contenido, un `text` con el resumen y un `image`
+con el PNG en base64, que Claude Desktop muestra directamente en el chat. El
+mapa se dibuja con `matplotlib`; los tiles de fondo se descargan de
+OpenStreetMap con `urllib`, y si no hay red se dibuja el trazo sobre fondo plano.
+
+![Mapa de recorrido](docs/mapa_ejemplo.png)
+
 ## Ejemplos de preguntas
 
 - ¿Dónde está la P-123BCD ahorita?
 - ¿Hay unidades que lleven más de una hora paradas?
 - Dame el resumen del recorrido de la P-456DEF de ayer.
+- Muéstrame en un mapa por dónde anduvo la P-789GHJ ayer.
 - ¿Cuántas paradas hizo la P-234KLM el lunes y dónde fue la más larga?
 - ¿Hubo excesos de velocidad esta semana? ¿Qué unidad tuvo más?
 - ¿Qué unidad perdió señal en los últimos siete días?
@@ -212,8 +224,8 @@ Dos grupos:
 ## Implementación del protocolo
 
 Todo lo que toca el protocolo está escrito a mano con `sys`, `json` y `logging`.
-`pandas`, `shapely` y `geopy` son lógica de negocio; `requests` solo lo usa el
-generador de datos.
+`pandas`, `shapely`, `geopy` y `matplotlib` son lógica de negocio; `requests`
+solo lo usa el generador de datos.
 
 - **`servidor/main.py`, transporte.** Lee stdin línea por línea, escribe cada
   respuesta en stdout seguida de `\n` y `flush()`. Todo log va a stderr porque
@@ -264,6 +276,7 @@ mcp-local-redes/
 │       ├── posicion.py
 │       ├── detenidas.py
 │       ├── recorrido.py
+│       ├── mapa.py
 │       ├── alertas.py
 │       ├── geocercas.py
 │       └── kilometraje.py

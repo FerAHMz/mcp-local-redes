@@ -6,7 +6,7 @@ para que el protocolo sea visible.
 
 Uso:
     python cliente_prueba.py            # modo interactivo
-    python cliente_prueba.py --demo     # secuencia fija con las seis herramientas
+    python cliente_prueba.py --demo     # secuencia fija con las siete herramientas
 """
 
 import json
@@ -15,6 +15,7 @@ import sys
 from datetime import date, timedelta
 
 VERSION_PROTOCOLO = "2025-06-18"
+MAX_LINEA_VISIBLE = 1500
 
 ROJO, VERDE, AZUL, GRIS, FIN = "\033[31m", "\033[32m", "\033[34m", "\033[90m", "\033[0m"
 
@@ -36,7 +37,12 @@ class Cliente:
         linea = self.proceso.stdout.readline()
         if not linea:
             raise ConnectionError("el servidor cerró stdout")
-        print(f"{VERDE}<- {linea.rstrip()}{FIN}")
+        # La imagen de mapa_recorrido viene en base64 dentro de la misma línea
+        # (cientos de KB); en pantalla la recorto, pero el mensaje se parsea completo.
+        visible = linea.rstrip()
+        if len(visible) > MAX_LINEA_VISIBLE:
+            visible = f"{visible[:MAX_LINEA_VISIBLE]}... ({len(linea) // 1024} KB en total)"
+        print(f"{VERDE}<- {visible}{FIN}")
         return json.loads(linea)
 
     def llamar(self, metodo, params=None):
@@ -84,7 +90,10 @@ def imprimir_resultado(respuesta):
     if "content" in result:
         prefijo = f"{ROJO}[isError] " if result.get("isError") else ""
         for bloque in result["content"]:
-            print(f"{prefijo}{bloque.get('text', '')}{FIN}")
+            if bloque["type"] == "image":
+                print(f"{GRIS}[imagen {bloque['mimeType']}, {len(bloque['data']) * 3 // 4 // 1024} KB]{FIN}")
+            else:
+                print(f"{prefijo}{bloque.get('text', '')}{FIN}")
     print()
 
 
@@ -128,7 +137,7 @@ def interactivo(cliente, herramientas):
 
 
 def demo(cliente):
-    """Invoca las seis herramientas de principio a fin, más tres casos de error."""
+    """Invoca las siete herramientas de principio a fin, más tres casos de error."""
     # Tomo "hoy" del último reporte de la flota y no del reloj, para que la
     # demo funcione igual aunque la base se haya generado otro día.
     print(f"\n{GRIS}=== tools/call unidades_detenidas ==={FIN}")
@@ -142,6 +151,7 @@ def demo(cliente):
         ("ping", None),
         ("tools/call", {"name": "posicion_actual", "arguments": {"placa": "P-123BCD"}}),
         ("tools/call", {"name": "resumen_recorrido", "arguments": {"placa": "P-456DEF", "fecha": str(ayer)}}),
+        ("tools/call", {"name": "mapa_recorrido", "arguments": {"placa": "P-456DEF", "fecha": str(ayer)}}),
         ("tools/call", {"name": "alertas", "arguments": {"tipo": "exceso_velocidad", "fecha_inicio": str(hace_una_semana), "fecha_fin": str(hoy)}}),
         ("tools/call", {"name": "verificar_geocerca", "arguments": {"placa": "P-456DEF", "nombre_geocerca": "CEDIS Zona 12", "fecha": str(ayer)}}),
         ("tools/call", {"name": "reporte_kilometraje", "arguments": {"fecha_inicio": str(hace_una_semana), "fecha_fin": str(hoy)}}),
