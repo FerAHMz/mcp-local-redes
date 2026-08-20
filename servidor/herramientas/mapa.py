@@ -157,6 +157,12 @@ def ejecutar(db, argumentos):
         "fondo": "OpenStreetMap" if con_fondo else "sin mapa base (sin red)",
         "leyenda": "línea roja: recorrido; triángulo verde: inicio; cuadrado negro: fin; "
                    "círculos naranja: paradas (tamaño según minutos); áreas azules: geocercas",
+        # El cliente suele mostrar la imagen dentro de la tarjeta de la llamada y no en
+        # la respuesta; esta nota es para que el modelo le diga al usuario dónde verla.
+        "nota_para_el_asistente": "La imagen del mapa viene adjunta en este mismo resultado. "
+                                  "Indícale al usuario que el mapa está en la tarjeta de la "
+                                  "herramienta mapa_recorrido, justo arriba de tu respuesta, y "
+                                  "que puede hacer clic en la miniatura para verlo en grande.",
     }
     return [
         {"type": "text", "text": json.dumps(resumen, ensure_ascii=False, indent=2)},
