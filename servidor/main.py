@@ -9,8 +9,12 @@ import os
 import sqlite3
 import sys
 
-from servidor import jsonrpc
-from servidor.protocolo import Sesion
+# Para poder lanzarlo como `python servidor/main.py` desde cualquier directorio,
+# que es como lo arranca Claude Desktop.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from servidor import jsonrpc  # noqa: E402
+from servidor.protocolo import Sesion  # noqa: E402
 
 log = logging.getLogger("mcp")
 
